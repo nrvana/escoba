@@ -1,0 +1,2576 @@
+{
+  "SaveName": "Escoba",
+  "GameMode": "Baraja (40 cards)",
+  "Gravity": 0.5,
+  "PlayArea": 0.5,
+  "Date": "4/5/2020 5:02:37 PM",
+  "Table": "Table_Hexagon",
+  "Sky": "Sky_Sunset",
+  "Note": "",
+  "Rules": "",
+  "XmlUI": "<!-- Xml UI. See documentation: https://api.tabletopsimulator.com/ui/introUI/ -->",
+  "LuaScript": "--[[ Lua code. See documentation: http://berserk-games.com/knowledgebase/scripting/ --]]\n---- #include <vscode/console>\ndo\n---- #include <!/Console/console++>\ndo\n---- #include console\nif not console then\n    console = {}\n\n    -- Change these values as you wish\n    console.command_char = '>'\n    console.option       = '-'\n    console.prompt_color  = {r = 0.8,  g = 1.0,  b = 0.8 }\n    console.command_color = {r = 0.8,  g = 0.6,  b = 0.8 }\n    console.output_color  = {r = 0.88, g = 0.88, b = 0.88}\n    console.invalid_color = {r = 1.0,  g = 0.2,  b = 0.2 }\n    console.header_bb       = '[EECCAA]'\n    console.error_bb        = '[FF9999]'\n    console.inbuilt_help_bb = '[E0E0E0]'\n    console.client_help_bb  = '[C0C0FF]'\n\n    -- Exposed methods:\n\n    function console.add_validation_function(validation_function)\n        -- Adds a validation function all chat will be checked against:\n        -- function(string message) which returns (boolean valid, string response)\n        -- If all validation functions return <valid> as true the message will be displayed.\n        -- If one returns <valid> as false then its <response> will be displayed to that player instead.\n        table.insert(console.validation_functions, validation_function)\n    end\n\n    function console.add_player_command(command, parameter_text, help_text, command_function, default_parameters)\n        -- Adds a command anyone can use, see below for details\n        console.add_command(command, false, parameter_text, help_text, command_function, default_parameters)\n    end\n\n    function console.add_admin_command(command, parameter_text, help_text, command_function, default_parameters)\n        -- Adds a command only admins can use, see below for details\n        console.add_command(command, true, parameter_text, help_text, command_function, default_parameters)\n    end\n\n    function console.add_command(command, requires_admin, parameter_text, help_text, command_function, default_parameters)\n        -- Adds a command to the console.\n        -- command_function must take <player> as its first argument, and then any\n        --   subsequent arguments you wish which will be provided by the player.\n        -- You may alias an already-present command by calling this with command_function set to\n        --   the command string instead of a function.  default_parameters can be set for the alias.\n        -- See basic built-in commands at the bottom of this file for examples.\n        local commands = console.commands\n        local command_function = command_function\n        local help_text = help_text\n        local parameter_text = parameter_text\n        if type(command_function) == 'string' then --alias\n            if help_text == nil then\n                help_text = commands[command_function].help_text\n            end\n            if parameter_text == nil then\n                parameter_text = commands[command_function].parameter_text\n            end\n            command_function = commands[command_function].command_function\n        end\n        console.commands[command] = {\n            command_function   = command_function,\n            requires_admin     = requires_admin,\n            parameter_text     = parameter_text,\n            help_text          = help_text,\n            help_bb            = console.command_help_bb,\n            default_parameters = default_parameters,\n        }\n    end\n\n    function console.set_command_listing_bb(bb)\n        -- Tags commands added after with a bb color for when they are displayed (i.e. with 'help')\n        console.command_help_bb = bb\n    end\n\n    function console.disable()\n        -- Disables console for command purposes, but leaves validation functions running\n        console.active = false\n    end\n\n    function console.enable()\n        -- Enables console commands (console commands are on by default)\n        console.active = true\n    end\n\n    -- End of exposed methods.  You shouldn't need to interact with anything below (under normal circumstances)\n\n\n    console.active = true\n    console.in_command_mode = {}\n    console.commands = {}\n    console.validation_functions = {}\n    console.set_command_listing_bb(console.inbuilt_help_bb)\n\n    function onChat(message, player)\n        if message ~= '' then\n            local command = ''\n            local command_function = nil\n            local parameters = {player}\n            local requires_admin = false\n            local command_mode = console.in_command_mode[player.steam_id]\n            if command_mode and console.active then\n                command, command_function, parameters, requires_admin = console.get_command(message, player)\n            elseif message:sub(1, 1) == console.command_char and console.active then\n                if message:len() > 1 then\n                    command, command_function, parameters, requires_admin = console.get_command(message:sub(2), player)\n                else\n                    command, command_function, parameters, requires_admin = console.get_command(console.command_char, player)\n                end\n            else\n                for i, f in ipairs(console.validation_functions) do\n                    local valid, response = f(message)\n                    if response == nil then response = '' end\n                    if not valid then\n                        printToColor(response, player.color, console.invalid_color)\n                        return false\n                    end\n                end\n                return true\n            end\n            if console.active then\n                if command_function and (player.admin or not requires_admin) then\n                    if command_mode then\n                        message = console.command_char .. console.command_char .. message\n                    end\n                    local response, mute = command_function(unpack(parameters))\n                    if response ~= nil or mute ~= nil then\n                        if not mute then\n                            printToColor('\\n'..message, player.color, console.command_color)\n                        end\n                        if response then\n                            printToColor(response, player.color, console.output_color)\n                        end\n                    end\n                    if console.in_command_mode[player.steam_id] then console.display_prompt(player) end\n                    return false\n                else\n                    printToColor('\\n'..message, player.color, console.command_color)\n                    printToColor(console.error_bb .. \"<command '\" .. command .. \"' not found>[-]\", player.color, console.output_color)\n                    return false\n                end\n            end\n        end\n    end\n\n    function console.get_command(message, player)\n        local command_name = ''\n        local command_function = nil\n        local requires_admin = false\n        local parameters = {player}\n        for i, part in ipairs(console.split(message)) do\n            if i == 1 then\n                command_name = part\n                local command = console.commands[command_name]\n                if command then\n                    command_function = command.command_function\n                    requires_admin = command.requires_admin\n                    if command.default_parameters then\n                        for _, parameter in ipairs(command.default_parameters) do\n                            table.insert(parameters, parameter)\n                        end\n                    end\n                end\n            else\n                table.insert(parameters, part)\n            end\n        end\n        return command_name, command_function, parameters, requires_admin\n    end\n\n    function console.display_prompt(player)\n        printToColor(console.command_char..console.command_char, player.color, console.prompt_color)\n    end\n\n    function console.split(text, split_on)\n        local split_on = split_on or ' '\n        if type(split_on) == 'string' then\n            local s = {}\n            for c = 1, split_on:len() do\n                s[split_on:sub(c,c)] = true\n            end\n            split_on = s\n        end\n        local parts = {}\n        if text ~= '' then\n            local make_table = function(s)\n                local entries = console.split(s, ' ,')\n                local t = {}\n                for _, entry in ipairs(entries) do\n                    if type(entry) == 'string' and entry:find('=') then\n                        e = console.split(entry, '=')\n                        t[e[1]] = e[2]\n                    else\n                        table.insert(t, entry)\n                    end\n                end\n                return t\n            end\n            local current_split_on = split_on\n            local adding = false\n            local part = \"\"\n            local totype = tonumber\n            for c = 1, text:len() do\n                local char = text:sub(c, c)\n                if adding then\n                    if current_split_on[char] then -- ended current part\n                        if totype(part) ~= nil then\n                            table.insert(parts, totype(part))\n                        else\n                            table.insert(parts, part)\n                        end\n                        adding = false\n                        current_split_on = split_on\n                        totype = tonumber\n                    else\n                        part = part .. char\n                    end\n                else\n                    if not current_split_on[char] then -- found start of part\n                        if char == \"'\" then\n                            current_split_on = {[\"'\"] = true}\n                            totype = tostring\n                            part = ''\n                        elseif char == '\"' then\n                            current_split_on = {['\"'] = true}\n                            totype = tostring\n                            part = ''\n                        elseif char == '{' then\n                            current_split_on = {['}'] = true}\n                            totype = make_table\n                            part = ''\n                        else\n                            part = char\n                        end\n                        adding = true\n                    end\n                end\n            end\n            if adding then\n                if totype(part) ~= nil then\n                    table.insert(parts, totype(part))\n                else\n                    table.insert(parts, part)\n                end\n            end\n        end\n        return parts\n    end\n\n\n    -- Add basic built-in console commands\n\n    console.add_player_command('help', '[' .. console.option .. 'all|<command>]',\n        'Display available commands or help on all commands or help on a specific command.',\n        function (player, command)\n            if command ~= nil then\n                command = tostring(command)\n            end\n            local make_help = function (command)\n                return console.header_bb .. command .. ' ' .. console.commands[command].parameter_text ..\n                        '[-]\\n' .. console.commands[command].help_text\n            end\n            local info_mode = false\n            if command == console.option..'all' then\n                info_mode = true\n            end\n            if command and console.commands[command] then\n                return make_help(command)\n            elseif command and not info_mode then\n                return console.error_bb .. \"<command '\" .. command .. \"' not found>[-]\"\n            else\n                local msg = console.header_bb .. 'Available commands:[-]'\n                local command_list = {}\n                for c, _ in pairs(console.commands) do\n                    if player.admin or not console.commands[c].requires_admin then\n                        if info_mode then\n                            table.insert(command_list, make_help(c))\n                        else\n                            table.insert(command_list, c)\n                        end\n                    end\n                end\n                table.sort(command_list)\n                local sep\n                if info_mode then\n                    sep = '\\n\\n'\n                else\n                    sep = '\\n'\n                end\n                for _, c in ipairs(command_list) do\n                    local cmd = console.commands[c]\n                    if cmd then\n                        msg = msg .. sep .. cmd.help_bb .. c .. '[-]'\n                    else\n                        msg = msg .. sep .. c\n                    end\n                    if not info_mode then sep = ', ' end\n                end\n                return msg\n            end\n        end\n    )\n    console.add_player_command('?', nil, nil, 'help')\n    console.add_player_command('info', '', 'Display help on all available commands.', 'help', {console.option..'all'})\n\n    console.add_player_command('exit', '',\n        \"Leave <command mode> ('\" .. console.command_char .. \"' does the same).\",\n        function (player)\n            console.in_command_mode[player.steam_id] = nil\n            return console.header_bb .. '<command mode: off>[-]'\n        end\n    )\n\n    console.add_player_command('cmd', '',\n        \"Enter <command mode> ('\" .. console.command_char .. \"' does the same).\",\n        function (player)\n            console.in_command_mode[player.steam_id] = true\n            return console.header_bb .. '<command mode: on>[-]'\n        end\n    )\n\n    console.add_player_command(console.command_char, '',\n        'Toggle <command mode>',\n        function (player)\n            console.in_command_mode[player.steam_id] = not console.in_command_mode[player.steam_id]\n            if console.in_command_mode[player.steam_id] then\n                return console.header_bb .. '<command mode: on>[-]', true\n            else\n                return console.header_bb .. '<command mode: off>[-]', true\n            end\n        end\n    )\n\n    console.add_player_command('=', '<expression>',\n        'Evaluate an expression',\n        function (player, ...)\n            local expression = ''\n            for _, arg in ipairs({...}) do\n                expression = expression .. ' ' .. tostring(arg)\n            end\n            if not player.admin then\n                expression = expression:gasub('[a-zA-Z~]', '')\n            end\n            console.returned_value = dynamic.eval(expression)\n            return console.returned_value\n        end\n    )\n\n    console.add_player_command('echo', '<text>',\n        'Display text on screen',\n        function (player, ...)\n            local text = ''\n            for _, arg in ipairs({...}) do\n                text = text .. ' ' .. tostring(arg)\n            end\n            printToColor(text, player.color, console.output_color)\n            return false\n        end\n    )\n\n    console.add_player_command('cls', '',\n        'Clear console text',\n        function (player)\n            return '\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n' ..\n                   '\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n\\n'\n        end\n    )\n\n    console.add_player_command('alias', '<alias> <command> [<parameter>...]',\n        'Create a command alias.',\n        function (player, ...)\n            local alias\n            local command\n            local parameters = {}\n            for i, arg in ipairs({...}) do\n                if i == 1 then\n                    alias = tostring(arg)\n                elseif i == 2 then\n                    command = tostring(arg)\n                else\n                    table.insert(parameters, arg)\n                end\n            end\n            if not alias then\n                return console.error_bb .. '<must provide an alias>[-]'\n            --elseif console.commands[alias] ~= nil then\n            --    return console.error_bb .. \"<command '\" .. alias .. \"' already exists!>[-]\"\n            elseif command == nil then\n                return console.error_bb .. \"<must provide a command>[-]\"\n            elseif console.commands[command] == nil then\n                return console.error_bb .. \"<command '\" .. command .. \"' does not exist>[-]\"\n            else\n                local text = console.header_bb .. alias .. '[-] = ' .. command\n                local help_text = console.commands[command].help_text\n                if not help_text:find('\\nAliased to: ') then\n                    help_text = help_text .. '\\nAliased to: ' .. command\n                end\n                local combined_parameters = {}\n                if console.commands[command].default_parameters then\n                    for _, parameter in ipairs(console.commands[command].default_parameters) do\n                        table.insert(combined_parameters, parameter)\n                    end\n                end\n                for _, parameter in ipairs(parameters) do\n                    table.insert(combined_parameters, parameter)\n                    text = text .. ' ' .. parameter\n                    help_text = help_text .. ' ' .. parameter\n                end\n                console.add_command(alias, console.commands[command].requires_admin, console.commands[command].parameter_text, help_text, command, combined_parameters)\n                return text\n            end\n        end\n    )\n\n    -- change the command help color so client added commands appear different to in-built\n    console.set_command_listing_bb(console.client_help_bb)\nend\n\n---- #include console\n\nif not console.plusplus then\n    console.plusplus = true\n\n    -- Change these values as you wish\n    console.seperator         = '/'\n    console.wildcard          = '*'\n    console.literal           = '`'  -- string parameters will be treated as paths where apt unless prefixed with this\n    console.result            = '~'  -- refers to the most recently returned result from a call\n    console.command_seperator = ';'  -- used in batch files to seperate commands\n    console.indent            = '  '\n    console.crop_string_at = 20\n    console.builtin_path = 'sys'\n    console.table_bb    = '[EEDD88]'\n    console.hidden_bb   = '[DDAAAA]'\n    console.function_bb = '[AADDAA]'\n    console.value_bb    = '[88EE88]'\n    console.boolean_bb  = '[CCCCFF]'\n    console.object_bb   = '[CCBBCC]'\n    console.guid_bb     = '[BBBBBB]'\n\n    console.autoexec         = ''\n    console.autoexec_options = '-s'\n\n    -- Exposed methods:\n\n    function console.hide_globals(label)\n        -- all globals present when you call this will be hidden under <label> (unless built-in or already hidden)\n        local hidden = {}\n        for global, _ in pairs(_G) do\n            local found = false\n            for _, globals in pairs(console.hidden_globals) do\n                if globals[global] then\n                    found = true\n                    break\n                end\n            end\n            if not found then\n                table.insert(hidden, global)\n            end\n        end\n        if console.hidden_globals[label] == nil then\n            console.hidden_globals[label] = {}\n        end\n        for _, global in ipairs(hidden) do\n            console.hidden_globals[label][global] = true\n        end\n    end\n\n    function console.load()\n        -- call this function in an onLoad event to enable the autoexec\n        console.cd = console.seperator\n        for _, player in pairs(getSeatedPlayers()) do\n            if Player[player].admin then\n                console.commands['exec'].command_function(Player[player], console.seperator..'console'..console.seperator..'autoexec', console.autoexec_options)\n                break\n            end\n        end\n    end\n\n    function console.update()\n        -- call this function in an onUpdate event to enable the watch list\n        if console.watch_list and not console.watch_list_paused then\n            for variable, watch in pairs(console.watch_list) do\n                if watch.throttle == 0 or watch.last_check + watch.throttle < os.clock() then\n                    watch.last_check = os.clock()\n                    local node, id, parent, found\n                    if watch.is_guid then\n                        node = getObjectFromGUID(variable)\n                        found = tostring(node) ~= 'null'\n                    else\n                        node, id, parent, found = console.node_from_path(variable)\n                    end\n                    if node ~= nil and found then\n                        if type(node) == 'userdata' then\n                            if tostring(node) ~= 'null' then\n                                local p = function (x) return math.floor(x * 100) * 0.01 end\n                                local r = function (x) return math.floor(x + 0.5) end\n                                local position = node.getPosition()\n                                local rotation = node.getRotation()\n                                if p(position.x) ~= p(watch.position.x) or r(rotation.x) ~= r(watch.rotation.x) or\n                                   p(position.y) ~= p(watch.position.y) or r(rotation.y) ~= r(watch.rotation.y) or\n                                   p(position.z) ~= p(watch.position.z) or r(rotation.z) ~= r(watch.rotation.z) then\n                                   watch.position = position\n                                   watch.rotation = rotation\n                                   node = ' ∡ '..r(rotation.x)..' '..r(rotation.y)..' '..r(rotation.z) ..\n                                        console.boolean_bb..'   ⊞  '..p(position.x)..'   '..p(position.y)..'   '..p(position.z)\n                                   if watch.is_guid then\n                                       variable = console.format_guid(variable)\n                                   else\n                                       variable = console.object_bb .. variable .. '[-]'\n                                   end\n                                   printToColor(variable .. console.value_bb .. node .. '[-]', watch.player, console.output_color)\n                                end\n                            end\n                        elseif type(node) == 'function' then\n                            local result = node(unpack(watch.parameters))\n                            if watch.property and (type(result) == 'table' or type(result) == 'userdata') then\n                                result = result[watch.property]\n                                if type(result) == 'function' then\n                                    result = result()\n                                end\n                            end\n                            if result ~= watch.value then\n                                watch.value = result\n                                result = tostring(result)\n                                if result:len() > console.crop_string_at then result = result:sub(1, console.crop_string_at) .. '...' end\n                                if result:len() == 6 and watch.label:lower():find('guid') then result = console.format_guid(result) end\n                                printToColor(watch.label .. console.value_bb .. result .. '[-]', watch.player, console.output_color)\n                            end\n                        else\n                            if node ~= watch.value then\n                                watch.value = node\n                                if type(node) == 'boolean' then\n                                    if node then\n                                        node = 'true'\n                                    else\n                                        node = 'false'\n                                    end\n                                elseif type(node) == 'string' then\n                                    if node:len() > console.crop_string_at then node = node:sub(1, console.crop_string_at):gsub('\\n', ' ') .. '...' end\n                                end\n                                printToColor(variable .. ': ' .. console.value_bb .. node .. '[-]', watch.player, console.output_color)\n                            end\n                        end\n                    end\n                end\n            end\n        end\n    end\n\n    -- simple swear-blocking validation\n    console.add_validation_function(\n        function (message)\n            local message = message:lower()\n            for i, bad_word in pairs({'fuck', 'cunt'}) do\n                if message:find(bad_word) then\n                    return false, \"No swearing!\"\n                end\n            end\n            return true\n        end\n    )\n\n    -- End of exposed methods.  You shouldn't need to interact with anything below (under normal circumstances)\n\n\n    -- override default prompt with one which displays current table\n    function console.display_prompt(player)\n        printToColor(console.cd .. ' ' .. console.command_char..console.command_char, player.color, console.prompt_color)\n    end\n\n\n    -- console++ follows\n\n    console.cd = console.seperator\n    console.hidden_globals = {}\n    console.hide_globals(console.builtin_path)\n\n    function console.is_hidden(label)\n        for _, globals in pairs(console.hidden_globals) do\n            if globals[label] then\n                return true\n            end\n        end\n        return false\n    end\n\n    function console.escape_bb(s)\n        local s = tostring(s)\n        if s == '' then\n            return ''\n        else\n            local r = ''\n            for c = 1, s:len() do\n                local char = s:sub(c, c)\n                if char == '[' then\n                    r = r .. '[\\u{200B}'\n                elseif char == ']' then\n                    r = r .. '\\u{200B}]'\n                else\n                    r = r .. char\n                end\n            end\n            return r\n        end\n    end\n\n    function console.format_guid(guid)\n        return console.guid_bb .. '⁅' .. guid .. '⁆[-]'\n    end\n\n    function console.fill_path(path)\n        local path = path\n        local filter = nil\n        if path == nil then\n            return console.cd, filter\n        end\n        local c = path:len()\n        if path:sub(c) ~= console.seperator then\n            local found = false\n            while c > 0 do\n                local char = path:sub(c, c)\n                if char == console.wildcard then\n                    found = true\n                elseif char == console.seperator then\n                    break\n                end\n                c = c - 1\n            end\n            if found then\n                filter = '^'\n                for i = c + 1, path:len() do\n                    local char = path:sub(i, i)\n                    if char == console.wildcard then\n                        filter = filter .. '.*'\n                    else\n                        filter = filter .. char\n                    end\n                end\n                filter = filter .. '$'\n                path = path:sub(1, c)\n            end\n        end\n        if path:sub(1,1) == console.seperator then\n            return path, filter\n        else\n            return console.cd .. path, filter\n        end\n    end\n\n    function console.node_from_path(path)\n        local node = _G\n        local id = {''}\n        local parent = {nil}\n        local found = true\n        local depth = 0\n        local stack = {}\n        local hidden = nil\n        local ends_with_table = {true}\n        if path == 'true' then\n            node = true\n        elseif path == 'false' then\n            node = false\n        elseif path ~= console.seperator then\n            for i, part in ipairs(console.split(path, console.seperator)) do\n                if part == '..' then\n                    if depth > 0 then\n                        node = table.remove(parent)\n                        table.remove(id)\n                        table.remove(stack)\n                        table.remove(ends_with_table)\n                        depth = depth - 1\n                    end\n                elseif part == '.' then\n                    ; -- do nothing, . = where we are\n                elseif part == console.result then\n                    table.insert(parent, node)\n                    table.insert(id, part)\n                    table.insert(stack, part)\n                    node = console.returned_value\n                    table.insert(ends_with_table, type(node) == 'table')\n                    depth = depth + 1\n                elseif node[part] ~= nil then\n                    table.insert(parent, node)\n                    table.insert(id, part)\n                    table.insert(stack, part)\n                    node = node[part]\n                    table.insert(ends_with_table, type(node) == 'table')\n                    depth = depth + 1\n                elseif node == _G and console.hidden_globals[part] then\n                    hidden = console.hidden_globals[part]\n                else\n                    table.insert(id, part)\n                    found = false\n                    break\n                end\n            end\n        end\n        path = ''\n        for i, part in ipairs(stack) do\n            path = path .. console.seperator .. part\n        end\n        if table.remove(ends_with_table) then\n            path = path .. console.seperator\n        end\n        return node, table.remove(id), table.remove(parent), found, path, hidden\n    end\n\n\n    -- commands\n\n    console.add_admin_command('cd', '[<table>]',\n        'Display current table or change current table',\n        function (player, path)\n            if path == nil then\n                return console.cd\n            else\n                path = tostring(path)\n            end\n            local location = console.fill_path(path)\n            local node, id, parent, found, location = console.node_from_path(location)\n            local text = nil\n            if node ~= nil and found and type(node) == 'table' then\n                console.cd = location\n                if not console.in_command_mode[player.steam_id] then text = console.cd end\n            else\n                text = console.error_bb .. '<not found>[-]'\n            end\n            return text, false\n        end\n    )\n    console.add_admin_command('cd..', '', 'Change current table to parent table.', 'cd', {'..'})\n\n    console.add_admin_command('ls', '[' .. console.option .. '?afotv] [' .. console.option .. 'r[#]] [<table>]',\n        'Display variables in current table or specified table',\n        function (player, ...)\n            local help_details = console.header_bb .. 'Options[-]\\n' ..\n                'Show:\\n '..console.option..'f functions\\n '..console.option..'o objects\\n '..\n                console.option..'v variables (defaults to on)\\n '..console.option..'t tables (defaults to on)\\n '..\n                console.option..'a all\\n\\n' ..console.option..'r[#] recurse [# layers if specified]'\n            local path = console.cd\n            local display_functions = false\n            local display_objects = false\n            local display_variables = false\n            local display_tables = false\n            local display_all = false\n            local recursions_left = 0\n            for i, arg in ipairs({...}) do\n                arg = tostring(arg)\n                if arg:len() > 1 and arg:sub(1,1) == console.option then\n                    local c = 2\n                    while c <= arg:len() do\n                        local option = arg:sub(c,c)\n                        if option == 'f' then\n                            display_functions = not display_functions\n                        elseif option == 'o' then\n                            display_objects = not display_objects\n                        elseif option == 'v' then\n                            display_variables = not display_variables\n                        elseif option == 't' then\n                            display_tables = not display_tables\n                        elseif option == 'a' then\n                            display_all = not display_all\n                        elseif option == 'r' then\n                            local n = ''\n                            local j = c + 1\n                            while j <= arg:len() do\n                                local char = arg:sub(j, j)\n                                if char:match('%d') then\n                                    n = n .. char\n                                else\n                                    break\n                                end\n                                j = j + 1\n                            end\n                            c = j - 1\n                            if n == '' then\n                                recursions_left = 20\n                            else\n                                recursions_left = tonumber(n)\n                            end\n                        elseif option == '?' or option == 'h' then\n                            return help_details\n                        else\n                            return console.error_bb .. \"<option '\" .. console.option .. option .. \"' not recognized>[-]\\n\"\n                        end\n                        c = c + 1\n                    end\n                else\n                    path = arg\n                end\n            end\n            local default_variables = not (display_tables or display_objects or display_functions or display_variables)\n            if display_functions or display_objects or display_variables then\n                display_tables = not display_tables\n            end\n            if display_all then\n                display_functions = true\n                display_objects = true\n                display_variables = true\n                display_tables = true\n            elseif default_variables then\n                display_functions = false\n                display_objects = false\n                display_variables = true\n                display_tables = true\n            end\n            local location, filter = console.fill_path(path)\n            return console.ls(player, location, filter, display_functions, display_objects, display_variables, display_tables, recursions_left)\n        end\n    )\n    console.add_admin_command('dir', nil, nil, 'ls')\n    console.add_admin_command(console.result, '', \"Calls 'ls \"..console.option..\"a \"..console.result..\"'\", 'ls', {console.option..'a', console.result})\n\n    function console.ls(player, path, filter, display_functions, display_objects, display_variables, display_tables, recursions_left, indent)\n        local text = ''\n        local indent = indent or ''\n        local node, id, parent, found, location, hidden = console.node_from_path(path)\n        local paths = {}\n        if node ~= nil and (found or hidden) then\n            if type(node) == 'table' then\n                local tables = {}\n                local entries = {}\n                for k, v in pairs(node) do\n                    if (node ~= _G or (not hidden and not console.is_hidden(k)) or (hidden and hidden[k])) and (filter == nil or k:match(filter)) then\n                        if type(v) == 'table' then\n                            local t = console.table_bb .. k .. '[-]'\n                            table.insert(tables, t)\n                            paths[t] = path .. console.seperator .. k\n                        else\n                            if type(v) == 'function' then\n                                if display_functions then\n                                    table.insert(entries, console.function_bb .. k .. '[-]()')\n                                end\n                            elseif type(v) == 'userdata' then\n                                if display_objects then\n                                    local tag = tostring(v)\n                                    if tag:find('(LuaGameObjectScript)') and not tag:gsub('(LuaGameObjectScript)',''):find('Script ') then\n                                        tag = v.tag .. ' ' .. console.format_guid(v.getGUID())\n                                    end\n                                    if type(k) == 'number' and math.floor(k) == k then k = string.format('%04d', k) end\n                                    table.insert(entries, console.object_bb .. k .. '[-]: '  .. tag)\n                                end\n                            elseif display_variables then\n                                if type(v) == 'boolean' then\n                                    if v then\n                                        v = 'true'\n                                    else\n                                        v = 'false'\n                                    end\n                                    table.insert(entries, k .. ': ' .. console.boolean_bb .. v .. '[-]')\n                                else\n                                    local is_guid = false\n                                    if type(v) == 'string' then\n                                        if v:len()> console.crop_string_at then v = v:sub(1, console.crop_string_at):gsub('\\n', ' ') .. '...' end\n                                        if type(k) == 'string' and k:lower():find('guid') and v:len() == 6 then\n                                            is_guid = true\n                                        end\n                                    end\n                                    if is_guid then\n                                        table.insert(entries, k .. ': ' .. console.format_guid(v) .. '[-]')\n                                    else\n                                        table.insert(entries, k .. ': ' .. console.value_bb .. console.escape_bb(v) .. '[-]')\n                                    end\n                                end\n                            end\n                        end\n                    end\n                end\n                local cmp = function (a, b)\n                    if not a then\n                        return true\n                    elseif not b then\n                        return false\n                    else\n                        local la = a:len()\n                        local lb = b:len()\n                        local c = 1\n                        repeat\n                            if c > la and c <= lb then\n                                return true\n                            elseif c > lb and c <= la then\n                                return false\n                            elseif c > la then\n                                return false\n                            else\n                                local ba = a:sub(c, c):byte()\n                                local bb = b:sub(c, c):byte()\n                                if ba < bb then\n                                    return true\n                                elseif bb < ba then\n                                    return false\n                                end\n                            end\n                            c = c + 1\n                        until false\n                    end\n                end\n                table.sort(tables, cmp)\n                table.sort(entries, cmp)\n                local cr = ''\n                if display_tables then\n                    for i, t in ipairs(tables) do\n                        text = text .. cr .. indent .. t .. console.seperator\n                        if recursions_left ~= 0 then\n                            text = text .. '\\n' .. console.ls(player, paths[t], filter,\n                                display_functions, display_objects, display_variables, display_tables,\n                                recursions_left-1, indent..console.indent)\n                        end\n                        cr = '\\n'\n                    end\n                    if node == _G and not hidden then\n                        for label, _ in pairs(console.hidden_globals) do\n                            if (filter == nil or label:match(filter)) then -- and label ~= console.builtin_path\n                                text = text .. cr .. indent .. console.hidden_bb .. label .. console.seperator .. '[-]'\n                                cr = '\\n'\n                            end\n                        end\n                    end\n                end\n                for _, entry in ipairs(entries) do\n                    text = text .. cr .. indent .. entry\n                    cr = '\\n'\n                end\n            elseif type(node) == 'userdata' then\n                local tag = tostring(node)\n                if tag ~= 'null' and tag:find('(LuaGameObjectScript)') and not tag:gsub('(LuaGameObjectScript)',''):find('Script ') then\n                    tag = node.tag .. ' ' .. console.format_guid(node.getGUID())\n                end\n                text = indent .. console.object_bb .. id .. '[-]: ' .. tag\n            elseif type(node) == 'function' then\n                text = indent .. console.function_bb .. id .. '[-]()'\n            elseif type(node) == 'boolean' then\n                if node then\n                    text = indent .. id .. ': ' .. console.boolean_bb .. 'true[-]'\n                else\n                    text = indent .. id .. ': ' .. console.boolean_bb .. 'false[-]'\n                end\n            else\n                if type(id) == 'string' and id:lower():find('guid') and type(node) == 'string' and node:len() == 6 then\n                    text = indent .. id .. ': ' .. console.format_guid(node) .. '[-]'\n                else\n                    text = indent .. id .. ': ' .. console.value_bb .. console.escape_bb(node) .. '[-]'\n                end\n            end\n        else\n            text = indent .. console.error_bb .. '<not found>[-]'\n        end\n        return text\n    end\n\n    console.add_admin_command('call', '<function> [<parameter>...]',\n        'Call function with parameters and display result.',\n        function (player, ...)\n            local path = nil\n            local parameters = {}\n            for i, arg in ipairs({...}) do\n                if i == 1 then\n                    path = tostring(arg)\n                else\n                    if type(arg) == 'string' then\n                        if arg:len() > 2 and arg:sub(1,1) == console.literal then\n                            arg = arg:sub(2)\n                        else\n                            local node, id, parent, found = console.node_from_path(console.fill_path(arg))\n                            if node ~= nil and found then\n                                arg = node\n                            end\n                        end\n                    end\n                    table.insert(parameters, arg)\n                end\n            end\n            if path == nil then\n                return console.error_bb .. '<you must supply a function>[-]'\n            end\n            local location = console.fill_path(path)\n            local node, id, parent, found, location = console.node_from_path(location)\n            local text = nil\n            if node ~= nil and found and type(node) == 'function' then\n                console.returned_value = node(unpack(parameters))\n                text = tostring(console.returned_value)\n                if console.deferred_assignment then\n                    local da = console.deferred_assignment\n                    if da.command == 'set' then\n                        if da.parent[da.id] ~= nil then\n                            if da.force or type(console.returned_value) == type(da.parent[da.id]) then\n                                da.parent[da.id] = console.returned_value\n                                text = text .. '\\n' .. console.header_bb .. \"<set '\" .. da.id .. \"'>[-]\"\n                            else\n                                text = text .. '\\n' .. console.error_bb .. \"<cannot set '\" .. da.id .. \"': it is of type '\" .. type(da.parent[da.id]) .. \"'>[-]\"\n                            end\n                        else\n                            text = text .. '\\n' .. console.error_bb .. \"<cannot set '\" .. da.id .. \"': it does not exist>[-]\"\n                        end\n                    elseif da.command == 'add' then\n                        if da.parent[da.id] == nil then\n                            da.parent[da.id] = console.returned_value\n                            text = text .. '\\n' .. console.header_bb .. \"<added '\" .. da.id .. \"'>[-]\"\n                        else\n                            text = text .. '\\n' .. \"<cannot add '\" .. da.id .. \"': it already exists>[-]\"\n                        end\n                    end\n                    console.deferred_assignment = nil\n                end\n            else\n                text = console.error_bb .. '<not found>[-]'\n            end\n            return text, false\n        end\n    )\n\n    console.add_admin_command('set', '['..console.option..'f] <variable> [<value>]',\n        \"Set variable to value.  If no value specified then the next value returned from 'call' is used.\\n\" ..\n            console.option ..'f  force overwrite ignoring type',\n        function (player, ...)\n            local variable = nil\n            local value = nil\n            local force = false\n            for _, arg in ipairs({...}) do\n                if type(arg) == 'string' and arg:len() > 1 and arg:sub(1, 1) == console.option then\n                    local c = 2\n                    while c <= arg:len() do\n                        local option = arg:sub(c, c)\n                        if option == \"f\" then\n                            force = not force\n                        else\n                            return console.error_bb .. \"<option '\" .. option .. \"' not recognized>[-]\"\n                        end\n                        c = c + 1\n                    end\n                elseif variable == nil then\n                    variable = tostring(arg)\n                else\n                    value = arg\n                end\n            end\n            if variable == nil then\n                return console.error_bb .. '<you must supply a variable>[-]'\n            end\n            variable = console.fill_path(variable)\n            local node, id, parent, found = console.node_from_path(variable)\n            local text = ''\n            if node ~= nil and found then\n                if value == nil then\n                    console.deferred_assignment = {command = 'set', parent = parent, id = id, force = force}\n                    text = id .. ': ' .. console.header_bb .. \"<awaiting 'call'>[-]\"\n                else\n                    console.deferred_assignment = nil\n                    if type(value) == 'string' and value:len() > 0  then\n                        if value:sub(1, 1) == console.literal then\n                            value = value:sub(2)\n                        else\n                            local value_node, value_id, value_parent, value_found = console.node_from_path(value)\n                            if value_node ~= nil and value_found then\n                                value = value_node\n                            else\n                                return console.error_bb .. '<not found>[-]'\n                            end\n                        end\n                    end\n                    if type(node) == 'boolean' then\n                        if not value or tostring(value):lower() == 'false' then\n                            value = false\n                        else\n                            value = true\n                        end\n                    end\n                    if type(node) == type(value) or force then\n                        parent[id] = value\n                        text = id .. ': ' .. console.value_bb .. tostring(parent[id]) .. '[-]'\n                    else\n                        return console.error_bb .. \"<cannot set '\" .. id .. \"': it is of type '\" .. type(node) .. \"'>[-]\"\n                    end\n                end\n            else\n                text = console.error_bb .. '<not found>[-]'\n            end\n            return text\n        end\n    )\n\n    console.add_admin_command('toggle', '<boolean>',\n        'Toggle specified boolean variable',\n        function (player, variable)\n            if variable == nil then\n                return console.error_bb .. '<you must supply variable>'\n            else\n                variable = tostring(variable)\n            end\n            local variable = console.fill_path(variable)\n            local node, id, parent, found = console.node_from_path(variable)\n            local text = ''\n            if node ~= nil and found then\n                if type(node) == 'boolean' then\n                    if node then\n                        parent[id] = false\n                        text = id .. ': ' .. console.value_bb .. 'false[-]'\n                    else\n                        parent[id] = true\n                        text = id .. ': ' .. console.value_bb .. 'true[-]'\n                    end\n                else\n                    text = console.error_bb .. '<can only toggle a boolean>[-]'\n                end\n            else\n                text = console.error_bb .. '<not found>[-]'\n            end\n            return text\n        end\n    )\n    console.add_admin_command('tgl', nil, nil, 'toggle')\n\n    console.add_admin_command('rm', '<variable>',\n        'Remove specified variable',\n        function (player, variable)\n            if variable == nil then\n                return console.error_bb .. '<you must supply variable>'\n            else\n                variable = tostring(variable)\n            end\n            local variable = console.fill_path(variable)\n            local node, id, parent, found = console.node_from_path(variable)\n            local text = ''\n            if node ~= nil and found then\n                parent[id] = nil\n                text = id .. \" removed!\"\n            else\n                text = console.error_bb .. '<not found>[-]'\n            end\n            return text\n        end\n    )\n    console.add_admin_command('del', nil, nil, 'rm')\n\n    console.add_admin_command('add', '<variable> [<value>]',\n        \"Create a variable set to value.   If no value specified then the next value returned from 'call' is used.\",\n        function (player, variable, value)\n            if variable == nil then\n                return console.error_bb .. '<you must supply variable>[-]'\n            else\n                variable = tostring(variable)\n            end\n            local variable = console.fill_path(variable)\n            local node, id, parent, found = console.node_from_path(variable)\n            local text = ''\n            if found then\n                return console.error_bb .. '<already exists>[-]'\n            elseif node == nil or id == '' then\n                return console.error_bb .. '<not found>[-]'\n            else\n                if value == nil then\n                    console.deferred_assignment = {command = 'add', parent = node, id = id}\n                    text = id .. ': ' .. console.header_bb .. \"<awaiting 'call'>[-]\"\n                else\n                    console.deferred_assignment = nil\n                    if type(value) == 'string' and value:len() > 0  then\n                        if value:sub(1, 1) == console.literal then\n                            value = value:sub(2)\n                        else\n                            local value_node, value_id, value_parent, value_found = console.node_from_path(value)\n                            if value_node ~= nil and value_found then\n                                value = value_node\n                            else\n                                return console.error_bb .. '<not found>[-]'\n                            end\n                        end\n                    end\n                    node[id] = value\n                    text = id .. ': ' .. console.value_bb .. tostring(value) .. '[-]'\n                end\n            end\n            return text\n        end\n    )\n\n    console.add_admin_command('exec', '['..console.option..'?qsv] <commands>',\n        'Execute a series of commands held in a string: commands are seperated by a new line or '..console.command_seperator,\n        function (player, ...)\n            local help_details = console.option..'q    quiet: will not output anything except final output\\n' ..\n                                 console.option..'s    silent: will not output anything at all\\n'..\n                                 console.option..'v    verbose: will output commands as they execute\\n'\n            local commands = nil\n            local verbose = false\n            local quiet = false\n            local silent = false\n            for _, arg in ipairs({...}) do\n                if type(arg) == 'string' and arg:len() > 1 and arg:sub(1,1) == console.option then\n                    local c = 2\n                    while c <= arg:len() do\n                        local option = arg:sub(c,c)\n                        if option == '?' then\n                            return help_details\n                        elseif option == 'q' then\n                            quiet = not quiet\n                        elseif option == 's' then\n                            silent = not silent\n                        elseif option == 'v' then\n                            verbose = not verbose\n                        else\n                            return console.error_bb .. \"<option '\" .. option .. \"' not recognized>\"\n                        end\n                        c = c + 1\n                    end\n                elseif commands == nil then\n                    commands = tostring(arg)\n                end\n            end\n            if silent then quiet = true end\n            if commands:len() > 1 and commands:sub(1, 1) == console.literal then\n                commands = commands:sub(2)\n            else\n                local variable = console.fill_path(commands)\n                local node, id, parent, found = console.node_from_path(variable)\n                if node ~= nil and found then\n                    commands = node\n                else\n                    return console.error_bb .. '<not found>[-]'\n                end\n            end\n            if commands:find('\\n') then\n                commands = console.split(commands, '\\n')\n            else\n                commands = console.split(commands, console.command_seperator)\n            end\n            local end_result = nil\n            for _, command_text in ipairs(commands) do\n                local command = ''\n                local command_function = nil\n                local parameters = {player}\n                local requires_admin = false\n                command, command_function, parameters, requires_admin = console.get_command(command_text, player)\n                if command ~= '' then\n                    if command_function and (player.admin or not requires_admin) then\n                        local response, mute = command_function(unpack(parameters))\n                        if response ~= nil or mute ~= nil then\n                            if not mute and verbose and not quiet then\n                                printToColor('\\n'..command_text, player.color, console.command_color)\n                            end\n                            if response then\n                                end_result = response\n                                if not quiet then\n                                    printToColor(response, player.color, console.output_color)\n                                end\n                            end\n                        end\n                    elseif not quiet then\n                        if verbose then printToColor('\\n'..command_text, player.color, console.command_color) end\n                        printToColor(console.error_bb .. \"<command '\" .. command .. \"' not found>[-]\", player.color, console.output_color)\n                    end\n                end\n            end\n            if end_result and not silent then\n                printToColor(end_result, player.color, console.output_color)\n            end\n        end\n    )\n\n    console.add_admin_command('watch', '['..console.option..'?cgp] ['..console.option..'t#] ['..console.option..console.seperator..'<property>] [<variable>]',\n        'Watch a variable or object and display it whenever it changes.\\n' .. console.hidden_bb ..\n        'Requires you to add a '..console.function_bb..'console.update()[-] call to an ' ..\n        console.function_bb .. 'onUpdate[-] event in your code.[-]\\n',\n        function (player, ...)\n            local help_details = 'Call without a parameter to display watched items, or with a variable to add it to watch list.\\n' ..\n                                console.option..'c will clear variable if specified, or all.\\n' ..\n                                console.option..'g will let you specify an object by its GUID.\\n' ..\n                                console.option..'t# will throttle output to # seconds.\\n' ..\n                                console.option..console.seperator..'<property> will watch the property of the variable.\\n' ..\n                                console.option..'p will pause or unpause watching.\\n'\n            local path = nil\n            local clearing = false\n            local throttle = nil\n            local pause_changed = false\n            local by_guid = false\n            local parameters = {}\n            local labels = {}\n            local property = nil\n            for _, arg in ipairs({...}) do\n                if type(arg) == 'string' and arg:len() > 1 and arg:sub(1,1) == console.option then\n                    local c = 2\n                    while c <= arg:len() do\n                        local option = arg:sub(c,c)\n                        if option == '?' then\n                            return help_details\n                        elseif option == 'c' then\n                            clearing = not clearing\n                        elseif option == 'p' then\n                            pause_changed = not pause_changed\n                        elseif option == 'g' then\n                            by_guid = not by_guid\n                        elseif option == console.seperator then\n                            if arg:len() > c then\n                                property = arg:sub(c + 1)\n                                c = arg:len() + 1\n                            end\n                        elseif option == 't' then\n                            local n = ''\n                            local j = c + 1\n                            while j <= arg:len() do\n                                local char = arg:sub(j, j)\n                                if char:match('[0-9.]') then\n                                    n = n .. char\n                                else\n                                    break\n                                end\n                                j = j + 1\n                            end\n                            c = j - 1\n                            if n == '' then\n                                return console.error_bb .. '<you must provide a throttle duration (in seconds)>[-]'\n                            else\n                                throttle = tonumber(n)\n                            end\n                        else\n                            return console.error_bb .. \"<option '\" .. option .. \"' not recognized>\"\n                        end\n                        c = c + 1\n                    end\n                else\n                    if path == nil then\n                        path = tostring(arg)\n                    else\n                        local label = tostring(arg)\n                        if type(arg) == 'string' then\n                            if arg:len() > 2 and arg:sub(1,1) == console.literal then\n                                arg = arg:sub(2)\n                                label = arg\n                            else\n                                local node, id, parent, found = console.node_from_path(console.fill_path(arg))\n                                if node ~= nil and found then\n                                    arg = node\n                                end\n                            end\n                        end\n                        table.insert(labels, label)\n                        table.insert(parameters, arg)\n                    end\n                end\n            end\n            local text = ''\n            if pause_changed then\n                if console.watch_list_paused then\n                    console.watch_list_paused = nil\n                    text = text .. console.header_bb .. '<unpaused>[-]'\n                else\n                    console.watch_list_paused = true\n                    text = text .. console.header_bb .. '<paused>[-]'\n                end\n            end\n            if path == nil then\n                if throttle ~= nil then\n                    text = text .. '\\n' .. console.error_bb .. '<you must provide a variable or object>[-]'\n                elseif by_guid then\n                    text = text .. '\\n' .. console.error_bb .. '<you must provide a GUID>[-]'\n                elseif clearing then\n                    console.watch_list = nil\n                    console.watch_list_paused = nil\n                    text = text .. '\\nWatch list cleared!'\n                elseif not pause_changed then\n                    if console.watch_list then\n                        local watched = {}\n                        for label, watch in pairs(console.watch_list) do\n                            if watch.player == player.color then\n                                table.insert(watched, label)\n                            end\n                        end\n                        table.sort(watched)\n                        text = text .. '\\n'..console.header_bb..'Watching:[-]'\n                        for _, label in ipairs(watched) do\n                            local watch = console.watch_list[label]\n                            local is_guid = (label:len() == 6 and label:sub(1,1) ~= console.seperator)\n                            local node, id, parent, found\n                            local prefix\n                            text = text .. '\\n'\n                            if is_guid then\n                                prefix =  console.format_guid(label)\n                                node = getObjectFromGUID(label)\n                                found = tostring(node) ~= 'null'\n                            else\n                                prefix = label\n                                node, id, parent, found = console.node_from_path(label)\n                            end\n                            if node ~= nil and found then\n                                if type(node) == 'userdata' then\n                                    prefix = console.object_bb .. prefix .. '[-]'\n                                    local position = node.getPosition()\n                                    local rotation = node.getRotation()\n                                    local p = function (x) return math.floor(x * 100) * 0.01 end\n                                    local r = function (x) return math.floor(x + 0.5) end\n                                    text = text .. prefix .. console.value_bb .. ' ∡ '..r(rotation.x)..' '..r(rotation.y)..' '..r(rotation.z) .. '[-]'..\n                                            console.boolean_bb..'   ⊞  '..p(position.x)..'   '..p(position.y)..'   '..p(position.z)\n                                elseif type(node) == 'function' then\n                                    local result = node(unpack(console.watch_list[label].parameters))\n                                    if watch.property and (type(result) == 'table' or type(result) == 'userdata') then\n                                        result = result[watch.property]\n                                        if type(result) == 'function' then\n                                            result = result()\n                                        end\n                                    end\n                                    result = tostring(result)\n                                    if watch.propery and watch.property:lower():find('guid') then\n                                        result = console.format_guid(result)\n                                    end\n                                    if result:len() > console.crop_string_at then result = result:sub(1, console.crop_string_at) .. '...' end\n                                    text = text .. watch.label .. console.value_bb .. result .. '[-]'\n                                else\n                                    if type(node) == 'boolean' then\n                                        if node then\n                                            node = 'true'\n                                        else\n                                            node = 'false'\n                                        end\n                                    elseif type(node) == 'string' then\n                                        if node:len() > console.crop_string_at then node = node:sub(1, console.crop_string_at):gsub('\\n', ' ') .. '...' end\n                                    end\n                                    text = text .. prefix .. ': ' .. console.value_bb .. node .. '[-]'\n                                end\n                            end\n                        end\n                    else\n                        text = text .. \"\\nWatch list is empty.\"\n                    end\n                end\n            else\n                if not by_guid then\n                    path = console.fill_path(path)\n                end\n                if clearing then\n                    local node, id, parent, found\n                    if not by_guid then\n                        node, id, parent, found, path = console.node_from_path(path)\n                    end\n                    if console.watch_list[path] then\n                        console.watch_list[path] = nil\n                        if next(console.watch_list) == nil then\n                            console.watch_list = nil\n                        end\n                        text = text .. '\\n' .. console.header_bb.. 'No longer watching:[-] ' .. path\n                    else\n                        text = text .. '\\n' .. console.error_bb .. '<not found>[-]'\n                    end\n                else\n                    local node, id, parent, found\n                    if by_guid then\n                        node = getObjectFromGUID(path)\n                        found = tostring(node) ~= 'null'\n                    else\n                        node, id, parent, found, path = console.node_from_path(path)\n                    end\n                    if node ~= nil and found then\n                        if console.watch_list == nil then console.watch_list = {} end\n                        if throttle == nil then throttle = 0 end\n                        console.watch_list[path] = {player=player.color, throttle=throttle, last_check=0, property=property}\n                        if type(node) == 'userdata' then\n                            console.watch_list[path].position = node.getPosition()\n                            console.watch_list[path].rotation = node.getRotation()\n                            console.watch_list[path].is_guid  = by_guid\n                        elseif type(node) == 'function' then\n                            console.watch_list[path].parameters = parameters\n                            console.watch_list[path].value = node\n                            console.watch_list[path].label = console.function_bb .. path .. '[-]'\n                            if property then\n                                console.watch_list[path].label = console.watch_list[path].label .. console.seperator .. property\n                            end\n                            for _, label in ipairs(labels) do\n                                console.watch_list[path].label = console.watch_list[path].label .. ' ' .. console.hidden_bb .. label .. '[-]'\n                            end\n                            console.watch_list[path].label = console.watch_list[path].label .. ': '\n                        else\n                            console.watch_list[path].value = node\n                        end\n                        if by_guid then\n                            path = console.format_guid(path)\n                        end\n                        text = text .. '\\n' .. console.header_bb .. 'Watching:[-] ' .. path\n                    else\n                        text = text .. '\\n' .. console.error_bb .. '<not found>[-]'\n                    end\n                end\n            end\n            if text:len() > 1 and text:sub(1, 1) == '\\n' then\n                text = text:sub(2)\n            end\n            return text\n        end\n    )\n\n    console.add_player_command('shout', '<text>',\n        'Broadcast <text> to all players. Colour a section with {RRGGBB}section{-}.',\n        function (player, ...)\n            local text = player.steam_name .. ': '\n            local space = ''\n            for _, word in ipairs({...}) do\n                text = text .. space .. tostring(word)\n                space = ' '\n            end\n            text = text:gsub('{','[')\n            text = text:gsub('}',']')\n            broadcastToAll(text, stringColorToRGB(player.color))\n            return nil, false\n        end\n    )\n\n    -- change the command help color so client added commands appear different to console++\n    console.set_command_listing_bb('[A0F0C0]')\nend\nend\n\n---- #include <!/Console/console++>\n\n-- function prototype\nfunction onExternalCommand(command) end\n\n-- Overwrite onChat function if you rather be handled by onExternalMessage\n-- function onChat(message, player) end\n\nfunction onExternalMessage(data)\n  if data.input ~= nil then onExternalCommand(data.input) end\n  if data.command ~= nil then\n    local hostPlayer\n    local players = getSeatedPlayers()\n    for key, value in pairs(players) do\n      if Player[value].host then\n        hostPlayer = Player[value]\n      end\n    end\n    if data.command ~= '' then\n      local command = ''\n      local command_function = nil\n      local parameters = {hostPlayer}\n      local requires_admin = false\n      local command_mode = console.in_command_mode[hostPlayer.steam_id]\n      if command_mode and console.active then\n          command, command_function, parameters, requires_admin = console.get_command(data.command, hostPlayer)\n      elseif data.command:sub(1, 1) == console.command_char and console.active then\n          if data.command:len() > 1 then\n              command, command_function, parameters, requires_admin = console.get_command(data.command:sub(2), hostPlayer)\n          else\n              command, command_function, parameters, requires_admin = console.get_command(console.command_char, hostPlayer)\n          end\n      else\n          for i, f in ipairs(console.validation_functions) do\n              local valid, response = f(data.command)\n              if response == nil then response = '' end\n              if not valid then\n                  printToColor(response, hostPlayer.color, console.invalid_color)\n                  return false\n              end\n          end\n          return true\n      end\n      if console.active then\n          if command_function and (hostPlayer.admin or not requires_admin) then\n              if command_mode then\n                  data.command = console.command_char .. console.command_char .. data.command\n              end\n              local response, mute = command_function(unpack(parameters))\n              if response ~= nil or mute ~= nil then\n                  if not mute then\n                      printToColor('\\n'..data.command, hostPlayer.color, console.command_color)\n                  end\n                  if response then\n                      printToColor(response, hostPlayer.color, console.output_color)\n                  end\n              end\n              if console.in_command_mode[hostPlayer.steam_id] then console.display_prompt(hostPlayer) end\n              return false\n          else\n              printToColor('\\n'..data.command, hostPlayer.color, console.command_color)\n              printToColor(console.error_bb .. \"<command '\" .. command .. \"' not found>[-]\", hostPlayer.color, console.output_color)\n              return false\n          end\n      end\n    end\n  end\nend\nend\n\n---- #include <vscode/console>\n\ndeck = {}\nfunction onload()\n    makeButtons()\nend\n\nfunction makeButtons()\n    for _, obj in ipairs(getAllObjects()) do\n        if obj.name == 'Checker_red' then redchecker = getObjectFromGUID(obj.getGUID()) end\n        if obj.name == 'Checker_white' then whitechecker = getObjectFromGUID(obj.getGUID()) end\n        if obj.name == 'Checker_black' then blackchecker = getObjectFromGUID(obj.getGUID()) end\n    end\n    redchecker.createButton({ click_function = 'initialDeal', label = '',function_owner = self, position = {0, 0, 0}, rotation = {0, 0, 0}, width = 500, height = 500, font_size = 500  })\n    whitechecker.createButton({ click_function = 'roundDeal', label = '',function_owner = self, position = {0, 0, 0}, rotation = {0, 0, 0}, width = 500, height = 500, font_size = 500  })\n    blackchecker.createButton({ click_function = 'scoreRound', label = '',function_owner = self, position = {0, 0, 0}, rotation = {0, 0, 0}, width = 500, height = 500, font_size = 500  })\nend\n\nfunction initialDeal()\n    for _, obj in ipairs(getAllObjects()) do\n        if obj.name == 'Deck' then deck = getObjectFromGUID(obj.getGUID()) end\n    end\n    deck.shuffle()\n    for _,playerColor in ipairs(getSeatedPlayers()) do\n        deck.deal(3, playerColor)\n    end\n    initialFlop()\nend\n\nfunction initialFlop()\n    if deck~=nil then\n        deck.takeObject({index=0, position = {-3,3,0}, rotation={0,0,0}})\n        deck.takeObject({index=0, position = {-1,3,0}, rotation={0,0,0}})\n        deck.takeObject({index=0, position = {1,3,0}, rotation={0,0,0}})\n        deck.takeObject({index=0, position = {3,3,0}, rotation={0,0,0}})\n    end\nend\n\nfunction roundDeal()\n    for _,playerColor in ipairs(getSeatedPlayers()) do\n        deck.deal(3, playerColor)\n    end\nend\n\nfunction scoreRound()\n    -- get count of all cards\n    -- get count of coins\n    -- get count of 7s\n    -- look for the 7 of coins\n\n    print(\"--- Scoring this round ---\")\n    local sevenofcoins = ''\n    for player,playerColor in ipairs(getSeatedPlayers()) do\n        local total = 0\n        local coins = 0\n        local sevens = 0\n\n        for _, obj in pairs(Player[playerColor].getHandObjects()) do\n            -- print(obj.getName(), obj.getDescription())\n            if obj.getDescription() == 'Oros' then coins = coins + 1 end\n            if obj.getName() == 'Siete' then sevens = sevens + 1 end\n            if obj.getName() == 'Siete' and obj.getDescription() == 'Oros' then sevenofcoins = playerColor end\n            total = total + 1\n        end\n        printToAll(string.format(\"%s has %s cards.\", playerColor, total), playerColor)\n        printToAll(string.format(\"%s has %s coins.\", playerColor, coins), playerColor)\n        printToAll(string.format(\"%s has %s sevens.\", playerColor, sevens), playerColor)\n    end\n    printToAll(string.format(\"%s has the golden seven!\", sevenofcoins), {r=216,g=165,b=0})\n    print(\"--- Ready for next round. ---\")\nend\n\n\n--[[ The Update function. This is called once per frame. --]]\nfunction update ()\n    --[[ print('Update loop!') --]]\nend",
+  "LuaScriptState": "",
+  "Grid": {
+    "Type": 0,
+    "Lines": false,
+    "Color": {
+      "r": 0.0,
+      "g": 0.0,
+      "b": 0.0
+    },
+    "Opacity": 0.75,
+    "ThickLines": false,
+    "Snapping": false,
+    "Offset": false,
+    "BothSnapping": false,
+    "xSize": 2.0,
+    "ySize": 2.0,
+    "PosOffset": {
+      "x": 0.0,
+      "y": 1.0,
+      "z": 0.0
+    }
+  },
+  "Lighting": {
+    "LightIntensity": 0.54,
+    "LightColor": {
+      "r": 1.0,
+      "g": 0.9804,
+      "b": 0.8902
+    },
+    "AmbientIntensity": 1.3,
+    "AmbientType": 0,
+    "AmbientSkyColor": {
+      "r": 0.5,
+      "g": 0.5,
+      "b": 0.5
+    },
+    "AmbientEquatorColor": {
+      "r": 0.5,
+      "g": 0.5,
+      "b": 0.5
+    },
+    "AmbientGroundColor": {
+      "r": 0.5,
+      "g": 0.5,
+      "b": 0.5
+    },
+    "ReflectionIntensity": 1.0,
+    "LutIndex": 0,
+    "LutContribution": 1.0
+  },
+  "Hands": {
+    "Enable": true,
+    "DisableUnused": false,
+    "Hiding": 0,
+    "HandTransforms": [
+      {
+        "Color": "Red",
+        "Transform": {
+          "posX": -13.6428823,
+          "posY": 3.56329823,
+          "posZ": -7.488908,
+          "rotX": 0.0,
+          "rotY": 60.0000038,
+          "rotZ": 0.0,
+          "scaleX": 10.2691774,
+          "scaleY": 6.63457251,
+          "scaleZ": 4.893845
+        }
+      },
+      {
+        "Color": "Yellow",
+        "Transform": {
+          "posX": -13.3166027,
+          "posY": 3.563315,
+          "posZ": 8.302211,
+          "rotX": 0.0,
+          "rotY": 119.999992,
+          "rotZ": 0.0,
+          "scaleX": 10.2734375,
+          "scaleY": 6.63457251,
+          "scaleZ": 4.895229
+        }
+      },
+      {
+        "Color": "Blue",
+        "Transform": {
+          "posX": 13.5731468,
+          "posY": 3.564146,
+          "posZ": 7.749796,
+          "rotX": 2.95755785E-06,
+          "rotY": 240.000031,
+          "rotZ": 1.70754788E-06,
+          "scaleX": 10.269701,
+          "scaleY": 6.63457251,
+          "scaleZ": 4.89401531
+        }
+      },
+      {
+        "Color": "White",
+        "Transform": {
+          "posX": -0.000350952148,
+          "posY": 3.563736,
+          "posZ": -15.5344858,
+          "rotX": 2.5444431E-14,
+          "rotY": 1.70754709E-06,
+          "rotZ": -1.70754709E-06,
+          "scaleX": 10.2680645,
+          "scaleY": 6.63457251,
+          "scaleZ": 4.89380455
+        }
+      },
+      {
+        "Color": "Green",
+        "Transform": {
+          "posX": 0.001850605,
+          "posY": 3.56371212,
+          "posZ": 15.5958805,
+          "rotX": -2.73207534E-05,
+          "rotY": 180.0,
+          "rotZ": 8.537735E-06,
+          "scaleX": 10.2703114,
+          "scaleY": 6.63457251,
+          "scaleZ": 4.89485741
+        }
+      },
+      {
+        "Color": "Pink",
+        "Transform": {
+          "posX": 13.6821384,
+          "posY": 3.56416941,
+          "posZ": -7.40812874,
+          "rotX": 0.0,
+          "rotY": 299.999969,
+          "rotZ": 0.0,
+          "scaleX": 10.2692795,
+          "scaleY": 6.63457251,
+          "scaleZ": 4.893324
+        }
+      }
+    ]
+  },
+  "Turns": {
+    "Enable": false,
+    "Type": 0,
+    "TurnOrder": [],
+    "Reverse": false,
+    "SkipEmpty": false,
+    "DisableInteractions": false,
+    "PassTurns": true,
+    "TurnColor": ""
+  },
+  "ObjectStates": [
+    {
+      "Name": "Checker_red",
+      "Transform": {
+        "posX": -1.84924614,
+        "posY": 0.95999974,
+        "posZ": 5.17208862,
+        "rotX": -3.728522E-05,
+        "rotY": 180.000076,
+        "rotZ": -9.34625859E-05,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scaleZ": 1.0
+      },
+      "Nickname": "Setup",
+      "Description": "",
+      "GMNotes": "",
+      "ColorDiffuse": {
+        "r": 1.0,
+        "g": 0.0,
+        "b": 0.0
+      },
+      "Locked": false,
+      "Grid": true,
+      "Snap": true,
+      "IgnoreFoW": false,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "HideWhenFaceDown": false,
+      "Hands": false,
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": "255d8e"
+    },
+    {
+      "Name": "Checker_black",
+      "Transform": {
+        "posX": 1.81852436,
+        "posY": 0.9599994,
+        "posZ": 5.1923933,
+        "rotX": 0.000103463011,
+        "rotY": 180.0,
+        "rotZ": 5.39669645E-06,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scaleZ": 1.0
+      },
+      "Nickname": "Score",
+      "Description": "",
+      "GMNotes": "",
+      "ColorDiffuse": {
+        "r": 0.0,
+        "g": 0.0,
+        "b": 0.0
+      },
+      "Locked": false,
+      "Grid": true,
+      "Snap": true,
+      "IgnoreFoW": false,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "HideWhenFaceDown": false,
+      "Hands": false,
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": "3b97bd"
+    },
+    {
+      "Name": "Checker_white",
+      "Transform": {
+        "posX": -0.0235098619,
+        "posY": 0.9599999,
+        "posZ": 5.22026,
+        "rotX": 0.000111800822,
+        "rotY": 1.58179009E-05,
+        "rotZ": -9.253245E-05,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scaleZ": 1.0
+      },
+      "Nickname": "Deal",
+      "Description": "",
+      "GMNotes": "",
+      "ColorDiffuse": {
+        "r": 1.0,
+        "g": 1.0,
+        "b": 1.0
+      },
+      "Locked": false,
+      "Grid": true,
+      "Snap": true,
+      "IgnoreFoW": false,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "HideWhenFaceDown": false,
+      "Hands": false,
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "GUID": "fbda4c"
+    },
+    {
+      "Name": "Infinite_Bag",
+      "Transform": {
+        "posX": -8.075737,
+        "posY": 0.942999661,
+        "posZ": -8.366437,
+        "rotX": -1.54235158E-06,
+        "rotY": -3.69918125E-05,
+        "rotZ": 4.809854E-05,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scaleZ": 1.0
+      },
+      "Nickname": "",
+      "Description": "",
+      "GMNotes": "",
+      "ColorDiffuse": {
+        "r": 0.3058885,
+        "g": 0.372555166,
+        "b": 1.0
+      },
+      "Locked": false,
+      "Grid": true,
+      "Snap": true,
+      "IgnoreFoW": false,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "HideWhenFaceDown": false,
+      "Hands": false,
+      "MaterialIndex": -1,
+      "MeshIndex": -1,
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "ContainedObjects": [
+        {
+          "Name": "Counter",
+          "Transform": {
+            "posX": -5.63809967,
+            "posY": 3.006555,
+            "posZ": -8.654255,
+            "rotX": 359.490082,
+            "rotY": -0.00226141536,
+            "rotZ": 359.4501,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "",
+          "Description": "",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.0823529139,
+            "g": 0.0823529139,
+            "b": 0.0823529139
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": false,
+          "Hands": false,
+          "Counter": {
+            "value": 0
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "31343d"
+        }
+      ],
+      "GUID": "e7bf5b"
+    },
+    {
+      "Name": "Deck",
+      "Transform": {
+        "posX": -6.97205639,
+        "posY": 1.27008545,
+        "posZ": -11.597147,
+        "rotX": -0.000765490637,
+        "rotY": 180.1909,
+        "rotZ": 184.2869,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scaleZ": 1.0
+      },
+      "Nickname": "",
+      "Description": "",
+      "GMNotes": "",
+      "ColorDiffuse": {
+        "r": 0.713235259,
+        "g": 0.713235259,
+        "b": 0.713235259
+      },
+      "Locked": false,
+      "Grid": true,
+      "Snap": true,
+      "IgnoreFoW": false,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "HideWhenFaceDown": true,
+      "Hands": false,
+      "SidewaysCard": false,
+      "DeckIDs": [
+        139,
+        138,
+        137,
+        136,
+        135,
+        134,
+        133,
+        132,
+        131,
+        130,
+        129,
+        128,
+        127,
+        126,
+        125,
+        124,
+        123,
+        122,
+        121,
+        120,
+        119,
+        118,
+        117,
+        116,
+        115,
+        114,
+        113,
+        112,
+        111,
+        110,
+        109,
+        108,
+        107,
+        106,
+        105,
+        104,
+        103,
+        102,
+        101,
+        100
+      ],
+      "CustomDeck": {
+        "1": {
+          "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+          "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+          "NumWidth": 10,
+          "NumHeight": 7,
+          "BackIsHidden": false,
+          "UniqueBack": false
+        }
+      },
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "ContainedObjects": [
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.55057013,
+            "posY": 1.44700372,
+            "posZ": -8.283759,
+            "rotX": 359.9687,
+            "rotY": 179.923309,
+            "rotZ": 180.0527,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Rey",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 139,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.7727303,
+            "posY": 1.17170024,
+            "posZ": -8.283516,
+            "rotX": 359.979218,
+            "rotY": 180.040161,
+            "rotZ": 0.106256746,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Caballo",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 138,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "cd8ca1"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": -0.108452469,
+            "posY": 1.18982255,
+            "posZ": -8.450967,
+            "rotX": 0.002481485,
+            "rotY": 180.049088,
+            "rotZ": 359.8631,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Sota",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 137,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.8633412,
+            "posY": 1.22743464,
+            "posZ": -8.643153,
+            "rotX": 0.0129464427,
+            "rotY": 179.98291,
+            "rotZ": 3.209255,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Siete",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 136,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.128277034,
+            "posY": 1.17883337,
+            "posZ": -7.7500844,
+            "rotX": 359.979156,
+            "rotY": 180.1416,
+            "rotZ": 0.1912141,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Seis",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 135,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.998771369,
+            "posY": 1.17450571,
+            "posZ": -8.285253,
+            "rotX": 359.985382,
+            "rotY": 179.789368,
+            "rotZ": 0.227786437,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cinco",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 134,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.9191274,
+            "posY": 1.18077409,
+            "posZ": -7.67085171,
+            "rotX": 359.970551,
+            "rotY": 180.200836,
+            "rotZ": 0.148522511,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cuatro",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 133,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.6271894,
+            "posY": 1.18489373,
+            "posZ": -7.832837,
+            "rotX": 359.911,
+            "rotY": 179.941,
+            "rotZ": 0.4908444,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Tres",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 132,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.01813865,
+            "posY": 1.1448518,
+            "posZ": -8.439786,
+            "rotX": 0.0005032118,
+            "rotY": 164.988327,
+            "rotZ": 0.0133408951,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Dos",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 131,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.727644742,
+            "posY": 1.15951335,
+            "posZ": -9.180329,
+            "rotX": 0.6027647,
+            "rotY": 179.97435,
+            "rotZ": 0.120837323,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "As",
+          "Description": "Oros",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 130,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "eb0088"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.454176575,
+            "posY": 1.16565561,
+            "posZ": -8.399081,
+            "rotX": 359.975037,
+            "rotY": 179.785126,
+            "rotZ": 0.226633415,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Rey",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 129,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.475593925,
+            "posY": 1.24647748,
+            "posZ": -9.389383,
+            "rotX": 7.049173,
+            "rotY": 180.156815,
+            "rotZ": 359.0502,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Caballo",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 128,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "e07234"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": -0.0124519337,
+            "posY": 1.28866267,
+            "posZ": -9.294421,
+            "rotX": 4.41859,
+            "rotY": 180.253113,
+            "rotZ": 4.14653158,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Sota",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 127,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "995ce6"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.707113266,
+            "posY": 1.2510947,
+            "posZ": -8.289586,
+            "rotX": 357.779022,
+            "rotY": 180.0292,
+            "rotZ": 359.948425,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Siete",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 126,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "679427"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.007463,
+            "posY": 1.26413882,
+            "posZ": -8.461768,
+            "rotX": 2.32834744,
+            "rotY": 179.9548,
+            "rotZ": 359.99057,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Seis",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 125,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "0123fc"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.91847837,
+            "posY": 1.21265829,
+            "posZ": -8.898315,
+            "rotX": 0.0282467976,
+            "rotY": 179.99527,
+            "rotZ": 359.9557,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cinco",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 124,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "0f1cb4"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.494155824,
+            "posY": 1.290922,
+            "posZ": -7.859456,
+            "rotX": 0.179506272,
+            "rotY": 180.079865,
+            "rotZ": 3.41791582,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cuatro",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 123,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "d052d5"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.2970907,
+            "posY": 1.27358043,
+            "posZ": -8.413035,
+            "rotX": 359.485626,
+            "rotY": 180.300629,
+            "rotZ": 357.120026,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Tres",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 122,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "d3aef4"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.278291047,
+            "posY": 1.29786611,
+            "posZ": -8.02252,
+            "rotX": 357.6081,
+            "rotY": 179.982788,
+            "rotZ": 0.021014126,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Dos",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 121,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "d907d1"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.0593424663,
+            "posY": 1.28934383,
+            "posZ": -8.443889,
+            "rotX": 358.950256,
+            "rotY": 179.902176,
+            "rotZ": 0.0110419914,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "As",
+          "Description": "Copas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 120,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "f781d1"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.18375552,
+            "posY": 1.27300215,
+            "posZ": -8.059659,
+            "rotX": 359.6461,
+            "rotY": 179.935318,
+            "rotZ": 0.0613770224,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Rey",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 119,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "f4bda3"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.5564523,
+            "posY": 1.27052224,
+            "posZ": -8.638841,
+            "rotX": 359.986145,
+            "rotY": 180.005875,
+            "rotZ": 0.05079878,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Caballo",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 118,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.29578829,
+            "posY": 1.28013062,
+            "posZ": -8.372518,
+            "rotX": 359.949829,
+            "rotY": 179.91597,
+            "rotZ": 0.09780545,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Sota",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 117,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.4022171,
+            "posY": 1.28895056,
+            "posZ": -8.303942,
+            "rotX": -0.00285726972,
+            "rotY": 180.025787,
+            "rotZ": 0.0410429128,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Siete",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 116,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.6358617,
+            "posY": 1.29985821,
+            "posZ": -8.4054,
+            "rotX": 359.99173,
+            "rotY": 179.964127,
+            "rotZ": 0.03467493,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Seis",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 115,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.579706,
+            "posY": 1.30888486,
+            "posZ": -7.931236,
+            "rotX": -0.00371046318,
+            "rotY": 180.0123,
+            "rotZ": 0.03219568,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cinco",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 114,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.971513331,
+            "posY": 1.3185606,
+            "posZ": -8.15074348,
+            "rotX": 359.9828,
+            "rotY": 180.022629,
+            "rotZ": 0.145463273,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cuatro",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 113,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.17784023,
+            "posY": 1.32829189,
+            "posZ": -8.278656,
+            "rotX": 359.994019,
+            "rotY": 179.980591,
+            "rotZ": 0.0516835637,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Tres",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 112,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.19790173,
+            "posY": 1.3378377,
+            "posZ": -8.508472,
+            "rotX": 359.980225,
+            "rotY": 180.042252,
+            "rotZ": 0.119202465,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Dos",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 111,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.871677,
+            "posY": 1.3482573,
+            "posZ": -8.995839,
+            "rotX": 359.976959,
+            "rotY": 180.020584,
+            "rotZ": 0.0565432422,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "As",
+          "Description": "Bastos",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 110,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.09456651,
+            "posY": 1.35845459,
+            "posZ": -7.873714,
+            "rotX": 359.946777,
+            "rotY": 180.267166,
+            "rotZ": 0.134105965,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Rey",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 109,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.720457435,
+            "posY": 1.36845732,
+            "posZ": -7.458915,
+            "rotX": 359.874725,
+            "rotY": 180.316391,
+            "rotZ": 0.184280083,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Caballo",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 108,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.867617965,
+            "posY": 1.51544106,
+            "posZ": -7.889457,
+            "rotX": 359.885162,
+            "rotY": 179.97641,
+            "rotZ": 8.365263,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Sota",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 107,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.342326552,
+            "posY": 1.45973229,
+            "posZ": -7.88925552,
+            "rotX": 0.09785987,
+            "rotY": 179.909042,
+            "rotZ": 352.48822,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Siete",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 106,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": -0.162828416,
+            "posY": 1.3964783,
+            "posZ": -8.02177048,
+            "rotX": 0.00624305941,
+            "rotY": 180.022079,
+            "rotZ": 359.830475,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Seis",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 105,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.7054837,
+            "posY": 1.40617776,
+            "posZ": -8.042229,
+            "rotX": 359.9646,
+            "rotY": 180.123718,
+            "rotZ": 0.09504966,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cinco",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 104,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.458580375,
+            "posY": 1.41600192,
+            "posZ": -7.90336275,
+            "rotX": 359.9541,
+            "rotY": 179.96904,
+            "rotZ": 0.095845446,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Cuatro",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 103,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.037051,
+            "posY": 1.42526031,
+            "posZ": -8.167856,
+            "rotX": 0.0122033488,
+            "rotY": 180.003738,
+            "rotZ": 359.984253,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Tres",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 102,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 0.986557245,
+            "posY": 1.43465269,
+            "posZ": -8.229785,
+            "rotX": 0.0233218111,
+            "rotY": 180.011032,
+            "rotZ": 359.985931,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Dos",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 101,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "c68b0d"
+        },
+        {
+          "Name": "Card",
+          "Transform": {
+            "posX": 1.39138055,
+            "posY": 1.45819426,
+            "posZ": -8.246175,
+            "rotX": 359.9342,
+            "rotY": 179.927582,
+            "rotZ": 0.07601349,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "As",
+          "Description": "Espadas",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.713235259,
+            "g": 0.713235259,
+            "b": 0.713235259
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": true,
+          "Hands": true,
+          "CardID": 100,
+          "SidewaysCard": false,
+          "CustomDeck": {
+            "1": {
+              "FaceURL": "http://i.imgur.com/zh80vTK.jpg",
+              "BackURL": "http://i.imgur.com/b3XgyN7.jpg",
+              "NumWidth": 10,
+              "NumHeight": 7,
+              "BackIsHidden": false,
+              "UniqueBack": false
+            }
+          },
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "46fe2a"
+        }
+      ],
+      "GUID": "29ca6a"
+    },
+    {
+      "Name": "Infinite_Bag",
+      "Transform": {
+        "posX": -5.72656155,
+        "posY": 0.9430006,
+        "posZ": -8.23094749,
+        "rotX": 1.653029E-05,
+        "rotY": 2.69785469E-05,
+        "rotZ": -1.6228345E-05,
+        "scaleX": 1.0,
+        "scaleY": 1.0,
+        "scaleZ": 1.0
+      },
+      "Nickname": "",
+      "Description": "",
+      "GMNotes": "",
+      "ColorDiffuse": {
+        "r": 0.3058885,
+        "g": 0.372555166,
+        "b": 1.0
+      },
+      "Locked": false,
+      "Grid": true,
+      "Snap": true,
+      "IgnoreFoW": false,
+      "Autoraise": true,
+      "Sticky": true,
+      "Tooltip": true,
+      "GridProjection": false,
+      "HideWhenFaceDown": false,
+      "Hands": false,
+      "MaterialIndex": -1,
+      "MeshIndex": -1,
+      "XmlUI": "",
+      "LuaScript": "",
+      "LuaScriptState": "",
+      "ContainedObjects": [
+        {
+          "Name": "reversi_chip",
+          "Transform": {
+            "posX": -5.95679235,
+            "posY": 3.167406,
+            "posZ": -8.229065,
+            "rotX": 359.914825,
+            "rotY": 359.8765,
+            "rotZ": 2.00616384,
+            "scaleX": 1.0,
+            "scaleY": 1.0,
+            "scaleZ": 1.0
+          },
+          "Nickname": "Escoba token",
+          "Description": "",
+          "GMNotes": "",
+          "ColorDiffuse": {
+            "r": 0.757352948,
+            "g": 0.757352948,
+            "b": 0.757352948
+          },
+          "Locked": false,
+          "Grid": true,
+          "Snap": true,
+          "IgnoreFoW": false,
+          "Autoraise": true,
+          "Sticky": true,
+          "Tooltip": true,
+          "GridProjection": false,
+          "HideWhenFaceDown": false,
+          "Hands": false,
+          "XmlUI": "",
+          "LuaScript": "",
+          "LuaScriptState": "",
+          "GUID": "9107aa"
+        }
+      ],
+      "GUID": "b1ba4c"
+    }
+  ],
+  "DecalPallet": [],
+  "TabStates": {
+    "0": {
+      "title": "Rules",
+      "body": "",
+      "color": "Grey",
+      "visibleColor": {
+        "r": 0.5,
+        "g": 0.5,
+        "b": 0.5
+      },
+      "id": 0
+    },
+    "1": {
+      "title": "White",
+      "body": "",
+      "color": "White",
+      "visibleColor": {
+        "r": 1.0,
+        "g": 1.0,
+        "b": 1.0
+      },
+      "id": 1
+    },
+    "2": {
+      "title": "Brown",
+      "body": "",
+      "color": "Brown",
+      "visibleColor": {
+        "r": 0.443,
+        "g": 0.231,
+        "b": 0.09
+      },
+      "id": 2
+    },
+    "3": {
+      "title": "Red",
+      "body": "",
+      "color": "Red",
+      "visibleColor": {
+        "r": 0.856,
+        "g": 0.1,
+        "b": 0.094
+      },
+      "id": 3
+    },
+    "4": {
+      "title": "Orange",
+      "body": "",
+      "color": "Orange",
+      "visibleColor": {
+        "r": 0.956,
+        "g": 0.392,
+        "b": 0.113
+      },
+      "id": 4
+    },
+    "5": {
+      "title": "Yellow",
+      "body": "",
+      "color": "Yellow",
+      "visibleColor": {
+        "r": 0.905,
+        "g": 0.898,
+        "b": 0.172
+      },
+      "id": 5
+    },
+    "6": {
+      "title": "Green",
+      "body": "",
+      "color": "Green",
+      "visibleColor": {
+        "r": 0.192,
+        "g": 0.701,
+        "b": 0.168
+      },
+      "id": 6
+    },
+    "7": {
+      "title": "Blue",
+      "body": "",
+      "color": "Blue",
+      "visibleColor": {
+        "r": 0.118,
+        "g": 0.53,
+        "b": 1.0
+      },
+      "id": 7
+    },
+    "8": {
+      "title": "Teal",
+      "body": "",
+      "color": "Teal",
+      "visibleColor": {
+        "r": 0.129,
+        "g": 0.694,
+        "b": 0.607
+      },
+      "id": 8
+    },
+    "9": {
+      "title": "Purple",
+      "body": "",
+      "color": "Purple",
+      "visibleColor": {
+        "r": 0.627,
+        "g": 0.125,
+        "b": 0.941
+      },
+      "id": 9
+    },
+    "10": {
+      "title": "Pink",
+      "body": "",
+      "color": "Pink",
+      "visibleColor": {
+        "r": 0.96,
+        "g": 0.439,
+        "b": 0.807
+      },
+      "id": 10
+    },
+    "11": {
+      "title": "Black",
+      "body": "",
+      "color": "Black",
+      "visibleColor": {
+        "r": 0.25,
+        "g": 0.25,
+        "b": 0.25
+      },
+      "id": 11
+    }
+  },
+  "VersionNumber": "v12.3.3"
+}
